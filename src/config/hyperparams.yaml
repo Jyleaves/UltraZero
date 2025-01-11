@@ -1,0 +1,36 @@
+# 模型相关参数
+model:
+  embed_dim: 64       # 嵌入维度，表示每个输入特征的维度
+  num_heads: 4        # Transformer 中多头注意力机制的头数
+  mlp_dim: 128        # Transformer 中前馈神经网络的隐藏层维度
+  num_layers: 4       # Transformer 的层数
+  dropout: 0.1        # Dropout 概率，用于防止过拟合
+
+# 训练相关参数
+training:
+  learning_rate: 0.001  # 学习率，控制模型参数更新的步长
+  batch_size: 256       # 每次训练时使用的样本数量
+  weight_decay: 0.0001  # 权重衰减（L2正则化），用于防止过拟合
+  epochs: 10            # 每个训练周期（cycle）中训练的轮数
+
+# MCTS（蒙特卡洛树搜索）相关参数
+mcts:
+  mcts_simulations: 800  # 每次 MCTS 搜索的模拟次数
+  c_puct: 1.0            # PUCT 算法中的探索系数，控制探索与利用的平衡
+  dirichlet_alpha: 0.03  # Dirichlet 噪声的 alpha 参数，用于增加探索性
+  root_dirichlet_frac: 0.25  # 根节点 Dirichlet 噪声的比例
+  initial_temperature: 1.0   # 初始温度参数，用于控制策略的随机性
+  final_temperature: 0.0     # 最终温度参数，逐渐降低以增加确定性
+  decay_rate: 0.01           # 温度衰减率，控制温度从初始值到最终值的衰减速度
+  warmup_steps: 10           # 预热步数，在初始阶段保持较高的探索性
+
+# Selfplay 相关参数
+selfplay:
+  games_per_cycle: 10  # 每次 selfplay 循环中生成的对弈游戏数量
+
+# 评估相关参数
+evaluation:
+  eval_interval: 5  # 每 5 次训练循环后进行一次模型评估
+  num_games: 100    # 评估时使用的游戏数量
+  use_mcts: True    # 是否在评估时使用 MCTS
+  mcts_simulations: 800  # 评估时 MCTS 的模拟次数
