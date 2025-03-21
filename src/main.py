@@ -45,16 +45,16 @@ def selfplay_worker(
     device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
 
     try:
-        # # 1) 初始化模型(空壳)
-        # model = UltraZeroModel(**config['model'])
-        #
-        # # 2) 从主进程传来的模型文件加载权重到CPU，再放到指定GPU
-        # if model_path:
-        #     state_dict = torch.load(model_path, map_location='cpu', weights_only=True)
-        #     model.load_state_dict(state_dict)
-        # model.to(device)
-        # model.eval()
-        model = None
+        # 1) 初始化模型(空壳)
+        model = UltraZeroModel(**config['model'])
+
+        # 2) 从主进程传来的模型文件加载权重到CPU，再放到指定GPU
+        if model_path:
+            state_dict = torch.load(model_path, map_location='cpu', weights_only=True)
+            model.load_state_dict(state_dict)
+        model.to(device)
+        model.eval()
+        # model = None
 
         # 初始化自对弈对象
         selfplay = SelfPlay(model, gpu_id, **config['mcts'])

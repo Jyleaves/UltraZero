@@ -62,6 +62,23 @@ UltraZero/
 python main.py --mode interactive --model_path <模型文件路径>
 ```
 
+## 多卡并行训练
+
+如果你拥有多块 GPU，可以利用多进程并行自对弈的方式来加速数据生成与训练。项目支持通过 `parallel_selfplay` 模式进行并行自对弈，并允许指定多个 GPU 以及每个 GPU 上运行的进程数量。
+
+例如，假设你有 4 块 GPU，并希望每块 GPU 启动 8 个并行进程来生成自对弈数据，你可以使用如下命令：
+
+```bash
+python main.py --mode parallel_selfplay --gpu_ids 0,1,2,3 --ppg 8
+```
+
+参数说明：  
+- `--gpu_ids`：指定参与训练的 GPU 编号，多个编号之间使用逗号分隔（允许仅有1个GPU）。  
+- `--ppg`：指定每个 GPU 上的并行进程数。  
+- 其他配置项（例如 selfplay 的对局数量、超参数等）请参考配置文件 `config/hyperparams.yaml` 并根据需要调整。
+
+该模式下，程序会自动在各个 GPU 上分配进程，并在命令行实时显示自对弈过程中 X、O 和平局的统计信息。当生成的对局达到预设数量后，数据会自动合并，并进入训练阶段。
+
 ## 贡献
 
 欢迎大家为 UltraZero 项目贡献代码和意见！如果你有任何问题或建议，请提交 Issue 或 Pull Request。

@@ -1,0 +1,1 @@
+This folder will store the data samples generated during training.
