@@ -93,14 +93,14 @@ class ViT(nn.Module):
 
     def forward(self, x):
         # x: (B,5,9,9)
-        B = x.size(0)
-        x = self.patch_embed(x)  # (B,9,emb_dim)
+        B = x.size(0) # 在这里获取 B
+        x_patched = self.patch_embed(x)  # (B,9,emb_dim) 使用不同的变量名
         cls_tokens = self.cls_token.expand(B, -1, -1)  # (B,1,emb_dim)
-        x = torch.cat([cls_tokens, x], dim=1)  # (B,10,emb_dim)
+        x_combined = torch.cat([cls_tokens, x_patched], dim=1)  # (B,10,emb_dim) 使用不同的变量名
 
-        x = x + self.pos_embed  # 位置编码
-        x = self.encoder(x)
-        x = self.norm(x)
+        x_encoded = x_combined + self.pos_embed  # 位置编码 使用不同的变量名
+        x_encoded = self.encoder(x_encoded)
+        x_encoded = self.norm(x_encoded)
         # 取cls token作为全局特征
-        cls_repr = x[:, 0, :]  # (B,emb_dim)
+        cls_repr = x_encoded[:, 0, :]  # (B,emb_dim)
         return cls_repr

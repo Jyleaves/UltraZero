@@ -17,6 +17,7 @@ def load_config(config_path):
         yaml.YAMLError: 如果文件格式不正确。
     """
     if not os.path.exists(config_path):
+        print(config_path)
         raise FileNotFoundError(f"配置文件未找到: {config_path}")
 
     try:

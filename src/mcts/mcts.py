@@ -1,7 +1,9 @@
 import numpy as np
 import random
+import torch
+from torch.amp import autocast
 
-from node import Node
+from .node import Node
 
 # 假设有一个模型接口model.predict(state) -> (policy_logits, value)
 # policy_logits：长度81的原始logits（未mask非法动作时）
@@ -10,12 +12,14 @@ from node import Node
 # 另外，支持在根节点添加Dirichlet噪声
 
 class MCTS:
-    def __init__(self, model=None, simulations=800, c_puct=1.0, dirichlet_alpha=0.03, root_dirichlet_frac=0.25):
+    def __init__(self, device_id=0, model=None, simulations=800, c_puct=1.0, dirichlet_alpha=0.03, root_dirichlet_frac=0.25):
         self.model = model
         self.simulations = simulations
         self.c_puct = c_puct
         self.dirichlet_alpha = dirichlet_alpha
         self.root_dirichlet_frac = root_dirichlet_frac
+        self.device_id = device_id
+        self.device = torch.device(f"cuda:{device_id}" if torch.cuda.is_available() else "cpu")
 
     def search(self, root_node, state, legal_moves, add_dirichlet=False):
         # root_node: 一个未expand的节点或已expand的根节点
@@ -73,9 +77,8 @@ class MCTS:
             # 2. Evaluate leaf（如果游戏结束或无子节点）
             leaf_value = 0.0
             if sim_state.is_game_over():
-                current_player = sim_state.get_current_player()  # 获取当前玩家
                 winner = sim_state.get_winner()  # 获取游戏结果
-                leaf_value = self._terminal_value(winner, current_player)
+                leaf_value = 0.0 if winner == 0 else -1.0  # 若游戏结束且非平局，则对将要落子的玩家一定不利
             else:
                 # 若刚expand过，则node.value已设置；
                 leaf_value = node.value
@@ -84,27 +87,40 @@ class MCTS:
             # 回溯时从最后到root，每经过一层翻转value符号
             # leaf_value是对最后一层node所在player的价值，对其父节点的player价值相反。
             for (nd, child_idx) in reversed(moves_stack):
-                nd.update(child_idx, leaf_value)
                 leaf_value = -leaf_value
+                nd.update(child_idx, leaf_value)
 
-        # 返回策略分布π
-        # 若是最终决策阶段，可设temperature=0
-        pi = root_node.get_policy_distribution(temperature=1.0)
+        # ====== 用访问次数 N 得到根节点 MCTS 搜索后的分布 ======
+        visits = root_node.N  # 这是一个长度 = len(legal_moves) 的数组
+        if np.sum(visits) == 0:
+            # 如果没有模拟成功（极少数情况下），则设成均匀
+            pi = np.ones_like(visits) / len(visits)
+        else:
+            pi = visits / np.sum(visits)
+
         return pi, root_node
 
     def _expand_node(self, node, state, legal_moves, is_root=False, add_dirichlet=False):
         if self.model is not None:
+
             # 使用model评估当前状态
             # model输入state得到(policy_logits, value)
             # policy_logits为长度81，需对合法动作取子集并归一化为P
-            board_tensor = state.get_feature_tensor()
-            policy_logits, value = self.model.predict(board_tensor)
-            # 只保留legal_moves对应的logits
-            legal_logits = policy_logits[legal_moves]
-            # softmax归一化
-            max_logit = np.max(legal_logits)
-            exp_ = np.exp(legal_logits - max_logit)
-            priors = exp_ / (np.sum(exp_) + 1e-8)
+            with torch.no_grad(), autocast(f'cuda:{self.device_id}'):
+                board_tensor = state.get_feature_tensor()
+                board_tensor = torch.from_numpy(board_tensor).float().unsqueeze(0).to(self.device)  # (1, 5, 9, 9)
+                policy_logits, value = self.model(board_tensor)
+                if len(legal_moves) == 1:
+                    # 仅有一个合法动作时，直接将 priors 和 priors_train 设置为 1
+                    priors = np.array([1.0])
+                else:
+                    # 只保留legal_moves对应的logits
+                    legal_logits = policy_logits.squeeze(0)[legal_moves]
+                    legal_logits = legal_logits.detach().cpu().numpy()
+                    # softmax归一化
+                    max_logit = np.max(legal_logits)
+                    exp_ = np.exp(legal_logits - max_logit)
+                    priors = exp_ / (np.sum(exp_) + 1e-8)
 
             if is_root and add_dirichlet and len(priors) > 0:
                 dir_noise = np.random.dirichlet([self.dirichlet_alpha] * len(priors))
@@ -113,7 +129,11 @@ class MCTS:
             node.expand(legal_moves, priors, value)
         else:
             # 如果模型不存在，使用随机走子来估计价值
-            value = self._random_rollout(state)
+            winner = self._random_rollout(state)
+            if winner == 0:
+                value = 0.0
+            else:
+                value = 1.0 if state.get_current_player() == winner else -1.0
             priors = np.ones(len(legal_moves)) / len(legal_moves)  # 均匀分布
             node.expand(legal_moves, priors, value)
 
@@ -134,9 +154,8 @@ class MCTS:
             move = random.choice(legal_moves)
             sim_state.apply_move(move)
 
-        current_player = state.get_current_player()
         winner = sim_state.get_winner()
-        return self._terminal_value(winner, current_player)
+        return winner
 
     def _terminal_value(self, winner, current_player):
         """
@@ -146,9 +165,9 @@ class MCTS:
         :return: 从当前玩家视角的价值。
         """
         if winner == current_player:
-            return 1.0  # 当前玩家获胜
+            return -1.0  # 当前玩家获胜
         elif winner == -current_player:
-            return -1.0  # 对手获胜
+            return 1.0  # 对手获胜
         else:
             return 0.0  # 平局
 

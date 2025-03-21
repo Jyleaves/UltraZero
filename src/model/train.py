@@ -68,12 +68,13 @@ class UltraZeroModel(nn.Module):
         return policy_logits, value
 
 
-def train_one_epoch(model, dataloader, optimizer, device, value_loss_weight=1.0):
+def train_one_epoch(model, dataloader, optimizer, scaler, device, value_loss_weight=1.0):
     """
     训练一个epoch
     :param model: 训练的模型
     :param dataloader: 数据加载器
     :param optimizer: 优化器
+    :param scaler: 混合精度训练的GradScaler
     :param device: 设备（CPU或GPU）
     :param value_loss_weight: 价值损失的权重
     :return: 平均总损失, 平均策略损失, 平均价值损失
@@ -93,21 +94,26 @@ def train_one_epoch(model, dataloader, optimizer, device, value_loss_weight=1.0)
         z = z.to(device).unsqueeze(-1)  # 将z从标量扩展为 (B, 1) 的形状
 
         optimizer.zero_grad()  # 清空梯度
-        policy_logits, value_pred = model(state)  # 前向传播，获取策略输出和价值输出
 
-        # 计算策略损失：交叉熵损失
-        log_probs = F.log_softmax(policy_logits, dim=-1)  # 对策略输出进行log_softmax
-        policy_loss = -(pi_target * log_probs).sum(dim=-1).mean()  # 计算负对数似然损失
+        # 混合精度前向传播
+        with torch.amp.autocast('cuda'):
+            policy_logits, value_pred = model(state)  # 前向传播，获取策略输出和价值输出
 
-        # 计算价值损失：均方误差损失
-        value_loss = F.mse_loss(value_pred, z)
+            # 计算策略损失：交叉熵损失
+            log_probs = F.log_softmax(policy_logits, dim=-1)  # 对策略输出进行log_softmax
+            policy_loss = -(pi_target * log_probs).sum(dim=-1).mean()  # 计算负对数似然损失
 
-        # 计算总损失
-        loss = policy_loss + value_loss_weight * value_loss
+            # 计算价值损失：均方误差损失
+            value_loss = F.mse_loss(value_pred, z)
 
-        loss.backward()  # 反向传播
+            # 计算总损失
+            loss = policy_loss + value_loss_weight * value_loss
+
+        # 使用混合精度的 scaler 进行反向传播和优化
+        scaler.scale(loss).backward()  # 缩放 loss
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # 梯度裁剪
-        optimizer.step()  # 更新模型参数
+        scaler.step(optimizer)  # 更新模型参数
+        scaler.update()  # 更新Scaler
 
         # 累计损失
         total_loss += loss.item()
@@ -125,27 +131,32 @@ def train_one_epoch(model, dataloader, optimizer, device, value_loss_weight=1.0)
     return total_loss / n, total_policy_loss / n, total_value_loss / n  # 返回平均损失
 
 
-def train_model(model, dataset, batch_size=256, lr=1e-3, epochs=10, value_loss_weight=1.0):
+def train_model(model, dataset, gpu_ids, batch_size=256, learning_rate=1e-3, epochs=10, weight_decay=0.0001, value_loss_weight=1.0):
     """
     训练模型
+    :param gpu_ids: 可用gpu编号
+    :param weight_decay: 权重衰减（防止过拟合）
     :param model: 要训练的模型
     :param dataset: 训练数据集
     :param batch_size: 批量大小
-    :param lr: 学习率
+    :param learning_rate: 学习率
     :param epochs: 训练的总epoch数
     :param value_loss_weight: 价值损失的权重
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # 设置设备
-    model.to(device)  # 将模型移动到设备
-    torch.backends.cudnn.benchmark = True  # 启用CuDNN的benchmark模式以加速训练
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)  # 创建数据加载器
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)  # 使用AdamW优化器
+    device = torch.device(f"cuda:{gpu_ids[0]}" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
+
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)  # 使用AdamW优化器
+
+    # 初始化 GradScaler
+    scaler = torch.amp.GradScaler()
 
     for epoch in range(epochs):
         start_time = time.time()  # 记录当前epoch的开始时间
         # 训练一个epoch
-        loss, pol_loss, val_loss = train_one_epoch(model, dataloader, optimizer, device, value_loss_weight)
+        loss, pol_loss, val_loss = train_one_epoch(model, dataloader, optimizer, scaler, device, value_loss_weight)
         elapsed = time.time() - start_time  # 计算当前epoch的耗时
 
         # 使用tqdm.write打印每个epoch的信息，避免与进度条冲突
-        tqdm.write(f"Epoch {epoch + 1}/{epochs}: loss={loss:.4f}, policy_loss={pol_loss:.4f}, value_loss={val_loss:.4f}, time={elapsed:.2f}s")
+        tqdm.write(f"\nEpoch {epoch + 1}/{epochs}: loss={loss:.4f}, policy_loss={pol_loss:.4f}, value_loss={val_loss:.4f}, time={elapsed:.2f}s\n")

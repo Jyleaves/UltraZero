@@ -1,9 +1,12 @@
 import numpy as np
 import torch
+from torch.amp import autocast
+from tqdm import tqdm
+from multiprocessing import Manager, Process
 
 from .metrics import compute_win_rate, compute_value_error
-from ..mcts.mcts import MCTS
-from ..mcts.node import Node
+from src.mcts.mcts import MCTS
+from src.mcts.node import Node
 
 
 # 假设评估方式：
@@ -12,24 +15,28 @@ from ..mcts.node import Node
 # 3. 对一批已标注的state-value数据集来评估价值预测误差
 
 class Evaluator:
-    def __init__(self, model, num_games=100, use_mcts=False, mcts_simulations=200):
+    def __init__(self, model, num_games=100, use_mcts=False, mcts_simulations=200, dirichlet_alpha=0.03, root_dirichlet_frac=0.25,):
         self.model = model
         self.num_games = num_games
         self.use_mcts = use_mcts
         self.mcts_simulations = mcts_simulations
+        self.dirichlet_alpha = dirichlet_alpha
+        self.root_dirichlet_frac = root_dirichlet_frac
+        self.device_id = 0
 
-    def evaluate_win_rate(self, opponent_model, board_cls):
+    def evaluate_win_rate(self, opponent_model, board_cls, initial_add_dirichlet=True):
         # 使用给定model与opponent_model对战num_games局，统计胜率
         # board_cls为创建Board实例的类名
         # use_mcts决定是否用MCTS搜索，否则直接用policy argmax落子
         # 返回(win_rate, draw_rate, loss_rate)
 
         results = []
-        for i in range(self.num_games):
+        for i in tqdm(range(self.num_games), desc="Evaluating Win Rate"):
             board = board_cls()
             # 偶数局model先手(X=1)，奇数局opponent先手
             current_player_model = self.model if (i % 2 == 0) else opponent_model
             other_model = opponent_model if (i % 2 == 0) else self.model
+            add_dirichlet = initial_add_dirichlet
 
             while not board.is_game_over():
                 legal_moves = board.get_legal_moves()
@@ -40,22 +47,23 @@ class Evaluator:
                     break
 
                 if self.use_mcts:
-                    mcts = MCTS(current_player_model, simulations=self.mcts_simulations, c_puct=1.0)
+                    mcts = MCTS(self.device_id, current_player_model, simulations=self.mcts_simulations, c_puct=1.0)
                     root = Node(parent=None)
-                    pi, root = mcts.search(root, board, np.array(legal_moves), add_dirichlet=False)
+                    pi, root = mcts.search(root, board, np.array(legal_moves), add_dirichlet=add_dirichlet)
                     move = legal_moves[np.argmax(pi)]
                 else:
                     # 直接用policy argmax
                     state_tensor = board.get_feature_tensor()
-                    state_tensor = torch.from_numpy(state_tensor).unsqueeze(0).float()
-                    state_tensor = state_tensor.to(next(self.model.parameters()).device)
-                    with torch.no_grad():
+                    state_tensor = torch.from_numpy(state_tensor).unsqueeze(0).float().to(self.device_id)
+                    with torch.no_grad(), autocast('cuda'):
                         policy_logits, _ = current_player_model(state_tensor)
                     policy_probs = torch.softmax(policy_logits, dim=-1).cpu().numpy().squeeze()
                     # 仅在legal_moves中选argmax
                     legal_probs = policy_probs[legal_moves]
                     chosen_move = legal_moves[np.argmax(legal_probs)]
                     move = chosen_move
+
+                add_dirichlet = False
 
                 board.apply_move(move)
                 # 切换玩家
@@ -102,3 +110,68 @@ class Evaluator:
                 true_values.append(z)
         mse = compute_value_error(np.array(pred_values), np.array(true_values))
         return mse
+
+
+def evaluate_win_rate_parallel(
+        model,
+        opponent_model,
+        board_cls,
+        num_games,
+        num_workers,
+        use_mcts=False,
+        mcts_simulations=200,
+        device_ids=None,
+):
+    """
+    多进程并行评估胜率。
+    每个进程分配一定数量的游戏，最终统计总结果。
+    """
+    manager = Manager()
+    results_dict = manager.dict()
+
+    # 初始化结果字典
+    for worker_id in range(num_workers):
+        results_dict[worker_id] = {"wins": 0, "losses": 0, "draws": 0}
+
+    games_per_worker = num_games // num_workers
+    remainder = num_games % num_workers
+
+    def worker_function(worker_id, num_games, results_dict):
+        evaluator = Evaluator(
+            model=model,
+            num_games=num_games,
+            use_mcts=use_mcts,
+            mcts_simulations=mcts_simulations,
+        )
+        win_rate, draw_rate, loss_rate = evaluator.evaluate_win_rate(
+            opponent_model=opponent_model,
+            board_cls=board_cls,
+        )
+        results_dict[worker_id] = {
+            "wins": win_rate * num_games,
+            "losses": loss_rate * num_games,
+            "draws": draw_rate * num_games,
+        }
+
+    processes = []
+    for worker_id in range(num_workers):
+        n = games_per_worker + (1 if worker_id < remainder else 0)
+        if n == 0:
+            continue
+        p = Process(
+            target=worker_function,
+            args=(worker_id, n, results_dict),
+        )
+        processes.append(p)
+        p.start()
+
+    for p in processes:
+        p.join()
+
+    # 汇总结果
+    total_wins = sum(results_dict[worker_id]["wins"] for worker_id in range(num_workers))
+    total_losses = sum(results_dict[worker_id]["losses"] for worker_id in range(num_workers))
+    total_draws = sum(results_dict[worker_id]["draws"] for worker_id in range(num_workers))
+
+    total_games = total_wins + total_losses + total_draws
+    return total_wins / total_games, total_draws / total_games, total_losses / total_games

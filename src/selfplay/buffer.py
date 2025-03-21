@@ -64,6 +64,26 @@ class ReplayBuffer:
 
         print(f"ReplayBuffer loaded from {file_path}")
 
+    def load_and_merge(self, file_path):
+        """
+        从 file_path 加载对局数据，并合并到当前 ReplayBuffer。
+        """
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Buffer file {file_path} does not exist.")
+
+        # 创建一个临时 buffer 来加载文件
+        temp_buffer = ReplayBuffer(max_size=self.max_size)
+        temp_buffer.load(file_path)
+
+        # 逐条将其合并到当前 buffer
+        for i in range(temp_buffer.size):
+            state = temp_buffer.states[i]
+            policy = temp_buffer.policies[i]
+            value = temp_buffer.values[i]
+            self.add(state, policy, value)
+
+        print(f"Merged {temp_buffer.size} entries from {file_path} into the current ReplayBuffer.")
+
     def sample(self, batch_size):
         # 均匀随机采样
         idxs = np.random.randint(0, self.size, size=batch_size)

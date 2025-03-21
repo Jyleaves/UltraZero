@@ -1,5 +1,6 @@
 import numpy as np
 from .rules import check_game_winner, check_subboard_winner
+from .renderer import print_board
 
 
 # 棋盘编码方式：X = 1, O = -1, 空 = 0
@@ -92,7 +93,7 @@ class Board:
             moves.append(global_pos)
         return moves
 
-    def apply_move(self, move):
+    def apply_move(self, move, show_board=False):
         # move: 0~80
         if self.game_over:
             return
@@ -119,21 +120,32 @@ class Board:
             self.game_over = True
             self.winner = result
         else:
-            # 检查落子决定下个forced_subboard是否可用（该子棋盘是否全满或决出胜负）
-            if check_subboard_winner(self.board_state, next_forced) != 0 or \
-                    not self._get_legal_moves_in_subboard(next_forced):
-                # 如果下一个子棋盘已满或已结束，则无强制子棋盘限制
-                self.forced_subboard = -1
+            # 检查是否平局
+            all_subboards_finished = True
+            for sub_id in range(9):
+                sub_winner = check_subboard_winner(self.board_state, sub_id)
+                if sub_winner == 0 and np.any(
+                        self.board_state[sub_id // 3 * 3:sub_id // 3 * 3 + 3, sub_id % 3 * 3:sub_id % 3 * 3 + 3] == 0):
+                    all_subboards_finished = False
+                    break
+            if all_subboards_finished:
+                self.game_over = True
+                self.winner = 0  # 平局
             else:
-                self.forced_subboard = next_forced
+                # 检查落子决定下个forced_subboard是否可用（该子棋盘是否全满或决出胜负）
+                if check_subboard_winner(self.board_state, next_forced) != 0 or \
+                        not self._get_legal_moves_in_subboard(next_forced):
+                    # 如果下一个子棋盘已满或已结束，则无强制子棋盘限制
+                    self.forced_subboard = -1
+                else:
+                    self.forced_subboard = next_forced
+
+        if show_board:
+            print()
+            print_board(self.board_state)
 
         # 切换玩家
         self.current_player = -self.current_player
-
-        # 检查是否平局(无空格)
-        if not self.game_over and np.all(self.board_state != 0):
-            self.game_over = True
-            self.winner = 0  # 平局
 
     def get_feature_tensor(self):
         """
@@ -192,3 +204,7 @@ class Board:
 
     def get_winner(self):
         return self.winner
+
+    def render(self):
+        print()
+        print_board(self.board_state)

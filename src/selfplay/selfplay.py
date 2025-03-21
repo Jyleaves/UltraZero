@@ -1,13 +1,13 @@
 import numpy as np
 import math
 
-from ..mcts.mcts import MCTS
-from ..mcts.node import Node
-from utils import data_augmentations
+from src.mcts.mcts import MCTS
+from src.mcts.node import Node
+from .utils import data_augmentations
 
 
 class SelfPlay:
-    def __init__(self, model, mcts_simulations=800, c_puct=1.0, dirichlet_alpha=0.03, root_dirichlet_frac=0.25,
+    def __init__(self, model, device_id=0, mcts_simulations=800, c_puct=1.0, dirichlet_alpha=0.03, root_dirichlet_frac=0.25,
                  initial_temperature=1.0, final_temperature=0.1, decay_rate=0.01, warmup_steps=10):
         # model: 已加载好参数的NN (UltraZeroModel)
         # MCTS参数
@@ -16,6 +16,7 @@ class SelfPlay:
         self.c_puct = c_puct
         self.dirichlet_alpha = dirichlet_alpha
         self.root_dirichlet_frac = root_dirichlet_frac
+        self.device_id = device_id
 
         # Temperature 参数
         self.initial_temperature = initial_temperature
@@ -49,7 +50,7 @@ class SelfPlay:
         pi_list = []
         player_list = []
 
-        mcts = MCTS(self.model, simulations=self.mcts_simulations, c_puct=self.c_puct,
+        mcts = MCTS(self.device_id, self.model, simulations=self.mcts_simulations, c_puct=self.c_puct,
                     dirichlet_alpha=self.dirichlet_alpha, root_dirichlet_frac=self.root_dirichlet_frac)
 
         # 对局循环
@@ -68,22 +69,31 @@ class SelfPlay:
             pi, root_node = mcts.search(root_node, board, np.array(legal_moves), add_dirichlet=add_dirichlet)
             add_dirichlet = False  # 仅第一步加噪声
 
-            # 根据 temperature 对 pi 进行温度缩放
+            # 这里 pi 的长度就是 len(legal_moves)，里面是访问次数归一化后的分布
+            # 对它做温度处理
             if self.temperature == 0:
-                # 选最大访问次数的动作
+                # 温度=0 => argmax
                 action = legal_moves[np.argmax(pi)]
+                # pi_for_train = one-hot
+                pi_for_train = np.zeros_like(pi)
+                pi_for_train[np.argmax(pi)] = 1.0
             else:
-                # 对 pi 进行温度缩放
-                pi = np.power(pi, 1.0 / self.temperature)
-                pi = pi / np.sum(pi)  # 归一化
-                # 按缩放后的 pi 分布随机采样动作
-                action = np.random.choice(legal_moves, p=pi)
+                # 温度 > 0 => 先对 pi 做温度缩放
+                pi_t = np.power(pi, 1.0 / self.temperature)
+                pi_t /= np.sum(pi_t)
+                # 采样
+                action = np.random.choice(legal_moves, p=pi_t)
+                # 这个 pi_t 就是带温度的分布，也可作为训练标签
+                pi_for_train = pi_t
 
-            # 存储状态数据
-            # 获取当前状态特征(5,9,9)
+            # 把温度后 pi_for_train 转回 81 维写入：
+            pi_train_81 = np.zeros(81, dtype=np.float32)
+            pi_train_81[legal_moves] = pi_for_train
+
+            # 存储状态
             state_tensor = board.get_feature_tensor()
             state_list.append(state_tensor)
-            pi_list.append(pi)
+            pi_list.append(pi_train_81)
             player_list.append(board.get_current_player())
 
             # 执行动作
