@@ -19,10 +19,6 @@ UltraZero/
 ├── data/
 │   ├── pretrained_models/
 │   └── replay_buffer/
-├── docs/
-│   ├── design_spec.md
-│   ├── README.md
-│   └── usage_guide.md
 ├── src/
 │   ├── config/            # 配置文件（如 hyperparams.yaml）
 │   ├── evaluation/        # 模型评估模块
@@ -35,6 +31,7 @@ UltraZero/
 │   ├── main.py            # 项目的主要入口文件
 │   └── parallel_selfplay.py
 ├── LICENSE                # Apache License 2.0
+├── README.md
 └── requirements.txt       # 依赖列表
 ```
 
