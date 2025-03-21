@@ -16,14 +16,26 @@ UltraZero 是一个基于强化学习与蒙特卡洛树搜索（MCTS）的开源
 
 ```
 UltraZero/
-├── config/              # 配置文件（如 hyperparams.yaml）
-├── evaluation/          # 模型评估模块
-├── game/                # 棋盘和游戏逻辑实现
-├── mcts/                # 蒙特卡洛树搜索相关代码
-├── model/               # 神经网络模型及训练代码
-├── selfplay/            # 自对弈模块
-├── main.py              # 项目的入口文件
-└── README.md            # 项目说明文档
+├── data/
+│   ├── pretrained_models/
+│   └── replay_buffer/
+├── docs/
+│   ├── design_spec.md
+│   ├── README.md
+│   └── usage_guide.md
+├── src/
+│   ├── config/            # 配置文件（如 hyperparams.yaml）
+│   ├── evaluation/        # 模型评估模块
+│   ├── game/              # 棋盘和游戏逻辑实现
+│   ├── mcts/              # 蒙特卡洛树搜索相关代码
+│   ├── model/             # 神经网络模型及训练代码
+│   ├── selfplay/          # 自对弈模块
+│   ├── utils/             # 工具函数
+│   ├── __init__.py
+│   ├── main.py            # 项目的主要入口文件
+│   └── parallel_selfplay.py
+├── LICENSE                # Apache License 2.0
+└── requirements.txt       # 依赖列表
 ```
 
 ## 安装与依赖
@@ -45,7 +57,6 @@ UltraZero/
    ```bash
    pip install -r requirements.txt
    ```
-   > 确保项目中包含 `requirements.txt` 文件，列出所有必要的依赖库，如 `torch`、`numpy`、`tqdm` 等。
 
 ## 使用方法
 
@@ -61,8 +72,6 @@ UltraZero/
 ```bash
 python main.py --mode interactive --model_path <模型文件路径>
 ```
-
-## 多卡并行训练
 
 如果你拥有多块 GPU，可以利用多进程并行自对弈的方式来加速数据生成与训练。项目支持通过 `parallel_selfplay` 模式进行并行自对弈，并允许指定多个 GPU 以及每个 GPU 上运行的进程数量。
 
@@ -85,4 +94,4 @@ python main.py --mode parallel_selfplay --gpu_ids 0,1,2,3 --ppg 8
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE) 开源协议，欢迎广泛使用与修改。
+本项目采用 [Apache License 2.0](LICENSE) 开源协议，欢迎在遵守许可证条款的前提下自由使用与修改。
