@@ -45,7 +45,6 @@ UltraZero/
    ```bash
    pip install -r requirements.txt
    ```
-   > 确保项目中包含 `requirements.txt` 文件，列出所有必要的依赖库，如 `torch`、`numpy`、`tqdm` 等。
 
 ## 使用方法
 
@@ -61,8 +60,6 @@ UltraZero/
 ```bash
 python main.py --mode interactive --model_path <模型文件路径>
 ```
-
-## 多卡并行训练
 
 如果你拥有多块 GPU，可以利用多进程并行自对弈的方式来加速数据生成与训练。项目支持通过 `parallel_selfplay` 模式进行并行自对弈，并允许指定多个 GPU 以及每个 GPU 上运行的进程数量。
 
